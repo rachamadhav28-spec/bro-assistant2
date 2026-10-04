@@ -21,6 +21,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +35,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -64,11 +68,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class BroState(val label: String, val color: Color, val periodMs: Int) {
-    IDLE("navi", Color(0xFF3FA9F5), 2600),
+    IDLE("Idle", Color(0xFF3FA9F5), 2600),
     LISTENING("Listening...", Color(0xFF00E5A8), 900),
     THINKING("Thinking...", Color(0xFFB388FF), 700),
     EXECUTING("Executing...", Color(0xFFFFB300), 500),
@@ -79,7 +84,11 @@ enum class BroState(val label: String, val color: Color, val periodMs: Int) {
 
 data class ChatMessage(val text: String, val fromUser: Boolean)
 
-const val GREETING = "Hi, I'm BRO. Tap Mic and talk, or type a message."
+class JobHolder {
+    var job: Job? = null
+}
+
+const val GREETING = "Hi, I'm BRO. Tap Mic and talk, or type a message. I'll answer out loud."
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -152,6 +161,18 @@ fun BroOrb(state: BroState, modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun VoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = (if (selected) "● " else "○ ") + label,
+        fontSize = 15.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 10.dp)
+    )
+}
+
+@Composable
 fun BroScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -161,24 +182,76 @@ fun BroScreen() {
     var input by remember { mutableStateOf("") }
     var partial by remember { mutableStateOf("") }
     var permanentlyDenied by remember { mutableStateOf(false) }
+    var ttsReady by remember { mutableStateOf(false) }
+    var afterSpeech by remember { mutableStateOf(BroState.SUCCESS) }
+    var showVoices by remember { mutableStateOf(false) }
     val messages = remember { mutableStateListOf(ChatMessage(GREETING, false)) }
+    val jobs = remember { JobHolder() }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
+    // Shows SUCCESS or ERROR for a moment, then returns to IDLE.
+    fun showResultThenIdle() {
+        scope.launch {
+            val shown = afterSpeech
+            state = shown
+            delay(900)
+            if (state == shown) state = BroState.IDLE
+        }
+    }
+
+    val speaker = remember {
+        Speaker(
+            context = context,
+            onReadyChanged = { ok ->
+                ttsReady = ok
+                if (!ok) {
+                    messages.add(
+                        ChatMessage(
+                            "Voice output is unavailable. In phone Settings, search for " +
+                                "\"Text-to-speech\", choose Speech Services by Google and install " +
+                                "English voice data. I will keep replying in text.",
+                            false
+                        )
+                    )
+                }
+            },
+            onSpeakingStarted = { state = BroState.SPEAKING },
+            onSpeakingFinished = { showResultThenIdle() }
+        )
+    }
+
+    // BRO says something: shows it in chat and speaks it when voice is ready.
+    fun botSay(text: String, error: Boolean = false) {
+        messages.add(ChatMessage(text, false))
+        afterSpeech = if (error) BroState.ERROR else BroState.SUCCESS
+        if (ttsReady && speaker.speak(text)) {
+            state = BroState.SPEAKING
+        } else {
+            showResultThenIdle()
+        }
+    }
+
+    fun previewVoice() {
+        afterSpeech = BroState.SUCCESS
+        if (ttsReady && speaker.speak("Hi, I'm BRO. This is how I sound.")) {
+            state = BroState.SPEAKING
+        }
+    }
+
     // Demo pipeline (real understanding and actions come in later stages)
     fun handleUserText(text: String) {
+        speaker.stop()
+        jobs.job?.cancel()
         messages.add(ChatMessage(text, true))
-        scope.launch {
+        jobs.job = scope.launch {
             state = BroState.THINKING
             delay(800)
             state = BroState.EXECUTING
             delay(800)
-            messages.add(ChatMessage("(Demo) I received: $text", false))
-            state = BroState.SUCCESS
-            delay(900)
-            state = BroState.IDLE
+            botSay("(Demo) I received: $text")
         }
     }
 
@@ -193,18 +266,16 @@ fun BroScreen() {
             },
             onFailed = { msg ->
                 partial = ""
-                messages.add(ChatMessage(msg, false))
-                scope.launch {
-                    state = BroState.ERROR
-                    delay(900)
-                    state = BroState.IDLE
-                }
+                botSay(msg, error = true)
             }
         )
     }
 
     DisposableEffect(Unit) {
-        onDispose { voice.destroy() }
+        onDispose {
+            voice.destroy()
+            speaker.shutdown()
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -219,14 +290,12 @@ fun BroScreen() {
                 !ActivityCompat.shouldShowRequestPermissionRationale(
                     act, Manifest.permission.RECORD_AUDIO
                 )
-            messages.add(
-                ChatMessage(
-                    if (permanentlyDenied)
-                        "Microphone permission is blocked. Tap Mic again to open Settings and allow it."
-                    else
-                        "I need microphone permission to hear you. Tap Mic to try again.",
-                    false
-                )
+            botSay(
+                if (permanentlyDenied)
+                    "Microphone permission is blocked. Tap Mic again to open Settings and allow it."
+                else
+                    "I need microphone permission to hear you. Tap Mic to try again.",
+                error = true
             )
         }
     }
@@ -236,7 +305,13 @@ fun BroScreen() {
             voice.stop()
             return
         }
-        if (state != BroState.IDLE) return
+        if (state == BroState.SPEAKING) {
+            speaker.stop()
+            state = BroState.IDLE
+            return
+        }
+        if (state == BroState.THINKING || state == BroState.EXECUTING) return
+
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
@@ -264,11 +339,61 @@ fun BroScreen() {
     }
 
     fun newChat() {
+        jobs.job?.cancel()
         voice.cancel()
+        speaker.stop()
         partial = ""
         messages.clear()
         messages.add(ChatMessage(GREETING, false))
         state = BroState.IDLE
+    }
+
+    if (showVoices) {
+        val options = remember { speaker.voiceOptions() }
+        var selected by remember { mutableStateOf<String?>(speaker.savedVoiceName()) }
+        AlertDialog(
+            onDismissRequest = { showVoices = false },
+            title = { Text("Choose BRO's voice") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = "Tap a voice to hear it. Android does not label voices as male " +
+                            "or female, so keep the deepest one you like.",
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    VoiceRow(
+                        label = "Auto (best guess, deeper pitch)",
+                        selected = selected == null
+                    ) {
+                        selected = null
+                        speaker.selectVoice(null)
+                        previewVoice()
+                    }
+                    options.forEach { option ->
+                        VoiceRow(
+                            label = option.label,
+                            selected = selected == option.name
+                        ) {
+                            selected = option.name
+                            speaker.selectVoice(option.name)
+                            previewVoice()
+                        }
+                    }
+                    if (options.isEmpty()) {
+                        Text(
+                            text = "No other English voices were found. BRO will use the " +
+                                "default voice with a deeper pitch.",
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showVoices = false }) { Text("Done") }
+            }
+        )
     }
 
     Column(
@@ -293,7 +418,17 @@ fun BroScreen() {
                 )
                 Text(text = state.label, color = state.color, fontSize = 14.sp)
             }
-            TextButton(onClick = { newChat() }) { Text("New chat") }
+            Row {
+                TextButton(onClick = {
+                    if (state == BroState.LISTENING) {
+                        voice.cancel()
+                        partial = ""
+                        state = BroState.IDLE
+                    }
+                    showVoices = true
+                }) { Text("Voice") }
+                TextButton(onClick = { newChat() }) { Text("New chat") }
+            }
         }
 
         if (partial.isNotEmpty()) {
@@ -348,7 +483,13 @@ fun BroScreen() {
                 singleLine = true
             )
             Button(onClick = { onMicClick() }) {
-                Text(if (state == BroState.LISTENING) "Stop" else "Mic")
+                Text(
+                    when (state) {
+                        BroState.LISTENING -> "Stop"
+                        BroState.SPEAKING -> "Silence"
+                        else -> "Mic"
+                    }
+                )
             }
             Button(onClick = { send() }) { Text("Send") }
         }
