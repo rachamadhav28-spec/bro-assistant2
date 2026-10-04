@@ -78,7 +78,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class BroState(val label: String, val color: Color, val periodMs: Int) {
-    IDLE("Navi", Color(0xFF3FA9F5), 2600),
+    IDLE("Ready", Color(0xFF3FA9F5), 2600),
     LISTENING("Listening...", Color(0xFF00E5A8), 900),
     THINKING("Thinking...", Color(0xFFB388FF), 700),
     EXECUTING("Executing...", Color(0xFFFFB300), 500),
@@ -548,6 +548,7 @@ fun BroScreen() {
             .imePadding()
             .padding(12.dp)
     ) {
+        // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -557,4 +558,90 @@ fun BroScreen() {
                 Text(
                     text = "BRO",
                     color = Color.White,
-             
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = state.label,
+                    color = state.color,
+                    fontSize = 13.sp
+                )
+            }
+            Row {
+                TextButton(onClick = { showVoices = true }) { Text("Voice") }
+                TextButton(onClick = { newChat() }) { Text("New") }
+            }
+        }
+
+        // Animated orb
+        BroOrb(
+            state = state,
+            level = level,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+        )
+
+        // Live speech preview
+        if (partial.isNotEmpty()) {
+            Text(
+                text = partial,
+                color = Color(0xFF9FB3C8),
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            )
+        }
+
+        // Chat
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            items(messages) { m ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    contentAlignment = if (m.fromUser) Alignment.CenterEnd else Alignment.CenterStart
+                ) {
+                    Text(
+                        text = m.text,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .background(
+                                if (m.fromUser) Color(0xFF1E3A5F) else Color(0xFF151A2B),
+                                RoundedCornerShape(14.dp)
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        // Input row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                placeholder = { Text("Type a message") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            Button(onClick = { send() }) { Text("Send") }
+            Button(onClick = { onMicClick() }) {
+                Text(if (state == BroState.LISTENING) "Stop" else "Mic")
+            }
+        }
+    }
+}
