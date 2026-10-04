@@ -17,9 +17,9 @@ sealed class AiResult {
 }
 
 object AiClient {
-    private const val ENDPOINT = "https://api.anthropic.com/v1/messages"
-    private const val MODEL = "claude-haiku-4-5-20251001"
-    private const val API_VERSION = "2023-06-01"
+    // To change the model later, change only this line.
+    private const val MODEL = "gemini-3.5-flash-lite"
+    private const val ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
 
     private val SYSTEM_PROMPT = """
 You are the planning brain of BRO, a personal assistant on an Android phone.
@@ -65,23 +65,38 @@ Example answer: {"type":"plan","reply":"Working on it.","steps":[{"action":"open
             var conn: HttpURLConnection? = null
             try {
                 val body = JSONObject()
-                body.put("model", MODEL)
-                body.put("max_tokens", 600)
-                body.put("system", SYSTEM_PROMPT)
-                val msgs = JSONArray()
+                body.put(
+                    "systemInstruction",
+                    JSONObject().put(
+                        "parts",
+                        JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT))
+                    )
+                )
+                val contents = JSONArray()
                 for ((role, text) in history) {
-                    msgs.put(JSONObject().put("role", role).put("content", text))
+                    val geminiRole = if (role == "assistant") "model" else "user"
+                    contents.put(
+                        JSONObject()
+                            .put("role", geminiRole)
+                            .put("parts", JSONArray().put(JSONObject().put("text", text)))
+                    )
                 }
-                body.put("messages", msgs)
+                body.put("contents", contents)
+                body.put(
+                    "generationConfig",
+                    JSONObject()
+                        .put("responseMimeType", "application/json")
+                        .put("maxOutputTokens", 800)
+                )
 
-                conn = URL(ENDPOINT).openConnection() as HttpURLConnection
+                val url = URL(ENDPOINT_BASE + MODEL + ":generateContent")
+                conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.connectTimeout = 15000
                 conn.readTimeout = 30000
                 conn.doOutput = true
-                conn.setRequestProperty("content-type", "application/json")
-                conn.setRequestProperty("x-api-key", apiKey)
-                conn.setRequestProperty("anthropic-version", API_VERSION)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("x-goog-api-key", apiKey)
                 conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
 
                 val code = conn.responseCode
@@ -109,22 +124,36 @@ Example answer: {"type":"plan","reply":"Working on it.","steps":[{"action":"open
         } catch (e: JSONException) {
             ""
         }
-        val base = when (code) {
-            401 -> "The AI key was rejected. Open AI and paste the key again."
-            403 -> "The AI key does not have permission."
-            429 -> "The AI is busy or the rate limit was reached. Try again in a moment."
-            else -> "The AI returned an error (code $code)."
+        val keyProblem = detail.contains("API key", ignoreCase = true)
+        return when {
+            code == 401 || (code == 400 && keyProblem) ->
+                "The AI key was rejected. Tap AI and paste a fresh Gemini key."
+            code == 403 ->
+                "The AI key does not have permission. Create a new key in Google AI Studio."
+            code == 404 ->
+                "The AI model name was not found. The model may have been renamed."
+            code == 429 ->
+                "The free AI limit was reached. Wait a minute and try again."
+            else ->
+                "The AI returned an error (code $code)." +
+                    (if (detail.isNotEmpty()) " $detail" else "")
         }
-        return if (detail.isNotEmpty() && code != 401 && code != 429) "$base $detail" else base
     }
 
     private fun parseResponse(raw: String): AiResult {
         val root = JSONObject(raw)
-        val content = root.optJSONArray("content") ?: return AiResult.Failure("The AI sent an empty answer.")
+        val candidates = root.optJSONArray("candidates")
+        if (candidates == null || candidates.length() == 0) {
+            return AiResult.Failure("The AI did not give an answer. It may have been blocked.")
+        }
+        val parts = candidates.optJSONObject(0)
+            ?.optJSONObject("content")
+            ?.optJSONArray("parts")
+            ?: return AiResult.Failure("The AI sent an empty answer.")
         val sb = StringBuilder()
-        for (i in 0 until content.length()) {
-            val block = content.optJSONObject(i) ?: continue
-            if (block.optString("type") == "text") sb.append(block.optString("text"))
+        for (i in 0 until parts.length()) {
+            val p = parts.optJSONObject(i) ?: continue
+            sb.append(p.optString("text"))
         }
         return parsePlan(sb.toString())
     }
