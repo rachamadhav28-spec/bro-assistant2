@@ -16,6 +16,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -61,6 +62,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +70,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -90,6 +95,8 @@ class JobHolder {
 
 const val GREETING = "Hi, I'm BRO. Tap Mic and talk, or type a message. I'll answer out loud."
 
+private val TWO_PI = (2.0 * Math.PI).toFloat()
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,10 +108,33 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun DrawScope.ringArcs(c: Offset, ringR: Float, color: Color, spin: Float) {
+    drawArc(
+        color = color,
+        startAngle = spin,
+        sweepAngle = 110f,
+        useCenter = false,
+        topLeft = Offset(c.x - ringR, c.y - ringR),
+        size = Size(ringR * 2f, ringR * 2f),
+        style = Stroke(width = 6f, cap = StrokeCap.Round)
+    )
+    drawArc(
+        color = color.copy(alpha = 0.5f),
+        startAngle = -spin + 180f,
+        sweepAngle = 70f,
+        useCenter = false,
+        topLeft = Offset(c.x - ringR, c.y - ringR),
+        size = Size(ringR * 2f, ringR * 2f),
+        style = Stroke(width = 4f, cap = StrokeCap.Round)
+    )
+}
+
 @Composable
-fun BroOrb(state: BroState, modifier: Modifier = Modifier) {
+fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
     val color by animateColorAsState(state.color, tween(500), label = "orbColor")
+    val smoothLevel by animateFloatAsState(level, tween(90), label = "level")
     val transition = rememberInfiniteTransition(label = "orb")
+
     val pulse by transition.animateFloat(
         initialValue = 0.88f,
         targetValue = 1.12f,
@@ -114,18 +144,42 @@ fun BroOrb(state: BroState, modifier: Modifier = Modifier) {
         ),
         label = "pulse"
     )
+
+    val spinMs = when (state) {
+        BroState.THINKING -> 1500
+        BroState.EXECUTING -> 1800
+        else -> 5000
+    }
     val spin by transition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing)),
+        animationSpec = infiniteRepeatable(tween(spinMs, easing = LinearEasing)),
         label = "spin"
     )
 
-    Canvas(modifier = modifier) {
-        val c = Offset(size.width / 2f, size.height / 2f)
-        val base = size.minDimension / 2f
-        val coreR = base * 0.45f * pulse
+    val wave by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = TWO_PI,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
+        label = "wave"
+    )
 
+    val ripple by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
+        label = "ripple"
+    )
+
+    Canvas(modifier = modifier) {
+        val shake = if (state == BroState.ERROR) sin(wave * 8f) * 8f else 0f
+        val c = Offset(size.width / 2f + shake, size.height / 2f)
+        val base = size.minDimension / 2f
+        val lvl = if (state == BroState.LISTENING) smoothLevel else 0f
+        val coreR = base * 0.45f * pulse * (1f + 0.3f * lvl)
+        val ringR = base * 0.72f
+
+        // Glow
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(color.copy(alpha = 0.55f), Color.Transparent),
@@ -135,28 +189,112 @@ fun BroOrb(state: BroState, modifier: Modifier = Modifier) {
             radius = base,
             center = c
         )
+        // Core
         drawCircle(color = color, radius = coreR, center = c)
         drawCircle(color = Color.White.copy(alpha = 0.25f), radius = coreR * 0.5f, center = c)
 
-        val ringR = base * 0.72f
-        drawArc(
-            color = color,
-            startAngle = spin,
-            sweepAngle = 110f,
-            useCenter = false,
-            topLeft = Offset(c.x - ringR, c.y - ringR),
-            size = Size(ringR * 2f, ringR * 2f),
-            style = Stroke(width = 6f, cap = StrokeCap.Round)
-        )
-        drawArc(
-            color = color.copy(alpha = 0.5f),
-            startAngle = -spin + 180f,
-            sweepAngle = 70f,
-            useCenter = false,
-            topLeft = Offset(c.x - ringR, c.y - ringR),
-            size = Size(ringR * 2f, ringR * 2f),
-            style = Stroke(width = 4f, cap = StrokeCap.Round)
-        )
+        // State-specific animation
+        when (state) {
+            BroState.IDLE -> {
+                ringArcs(c, ringR, color, spin)
+            }
+
+            BroState.LISTENING -> {
+                for (k in 0..1) {
+                    val p = (ripple + k * 0.5f) % 1f
+                    drawCircle(
+                        color = color.copy(alpha = (1f - p) * 0.6f),
+                        radius = coreR + (base - coreR) * p,
+                        center = c,
+                        style = Stroke(width = 3f)
+                    )
+                }
+                ringArcs(c, ringR, color, spin)
+            }
+
+            BroState.THINKING -> {
+                ringArcs(c, ringR, color, spin)
+                for (i in 0..2) {
+                    val a = Math.toRadians((spin * 2f + i * 120f).toDouble())
+                    val pos = Offset(
+                        c.x + (cos(a) * ringR).toFloat(),
+                        c.y + (sin(a) * ringR).toFloat()
+                    )
+                    drawCircle(color = color, radius = 9f, center = pos)
+                }
+            }
+
+            BroState.EXECUTING -> {
+                val active = ((spin * 2f) / 30f).toInt() % 12
+                for (i in 0 until 12) {
+                    drawArc(
+                        color = color.copy(alpha = if (i == active) 1f else 0.25f),
+                        startAngle = i * 30f - 90f,
+                        sweepAngle = 22f,
+                        useCenter = false,
+                        topLeft = Offset(c.x - ringR, c.y - ringR),
+                        size = Size(ringR * 2f, ringR * 2f),
+                        style = Stroke(width = 8f, cap = StrokeCap.Round)
+                    )
+                }
+            }
+
+            BroState.SPEAKING -> {
+                val n = 24
+                val r0 = coreR * 1.15f
+                for (i in 0 until n) {
+                    val ang = Math.toRadians(i * 360.0 / n)
+                    val dx = cos(ang).toFloat()
+                    val dy = sin(ang).toFloat()
+                    val h = base * (0.06f + 0.22f * abs(sin(wave + i * 0.55f)))
+                    drawLine(
+                        color = color,
+                        start = Offset(c.x + dx * r0, c.y + dy * r0),
+                        end = Offset(c.x + dx * (r0 + h), c.y + dy * (r0 + h)),
+                        strokeWidth = 6f,
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+
+            BroState.SUCCESS -> {
+                drawCircle(
+                    color = color.copy(alpha = 0.6f),
+                    radius = ringR,
+                    center = c,
+                    style = Stroke(width = 5f)
+                )
+                val a = Offset(c.x - coreR * 0.4f, c.y)
+                val b = Offset(c.x - coreR * 0.1f, c.y + coreR * 0.3f)
+                val d = Offset(c.x + coreR * 0.4f, c.y - coreR * 0.3f)
+                drawLine(color = Color.White, start = a, end = b, strokeWidth = 10f, cap = StrokeCap.Round)
+                drawLine(color = Color.White, start = b, end = d, strokeWidth = 10f, cap = StrokeCap.Round)
+            }
+
+            BroState.ERROR -> {
+                drawCircle(
+                    color = color.copy(alpha = 0.6f),
+                    radius = ringR,
+                    center = c,
+                    style = Stroke(width = 5f)
+                )
+                val k = coreR * 0.3f
+                drawLine(
+                    color = Color.White,
+                    start = Offset(c.x - k, c.y - k),
+                    end = Offset(c.x + k, c.y + k),
+                    strokeWidth = 10f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = Color.White,
+                    start = Offset(c.x + k, c.y - k),
+                    end = Offset(c.x - k, c.y + k),
+                    strokeWidth = 10f,
+                    cap = StrokeCap.Round
+                )
+            }
+        }
     }
 }
 
@@ -181,6 +319,7 @@ fun BroScreen() {
     var state by remember { mutableStateOf(BroState.IDLE) }
     var input by remember { mutableStateOf("") }
     var partial by remember { mutableStateOf("") }
+    var level by remember { mutableStateOf(0f) }
     var permanentlyDenied by remember { mutableStateOf(false) }
     var ttsReady by remember { mutableStateOf(false) }
     var afterSpeech by remember { mutableStateOf(BroState.SUCCESS) }
@@ -197,7 +336,7 @@ fun BroScreen() {
         scope.launch {
             val shown = afterSpeech
             state = shown
-            delay(900)
+            delay(1200)
             if (state == shown) state = BroState.IDLE
         }
     }
@@ -262,12 +401,15 @@ fun BroScreen() {
             onPartial = { partial = it },
             onFinalText = { text ->
                 partial = ""
+                level = 0f
                 handleUserText(text)
             },
             onFailed = { msg ->
                 partial = ""
+                level = 0f
                 botSay(msg, error = true)
-            }
+            },
+            onLevel = { level = it }
         )
     }
 
@@ -334,6 +476,7 @@ fun BroScreen() {
         if (voice.isListening) {
             voice.cancel()
             partial = ""
+            level = 0f
         }
         handleUserText(text)
     }
@@ -343,6 +486,7 @@ fun BroScreen() {
         voice.cancel()
         speaker.stop()
         partial = ""
+        level = 0f
         messages.clear()
         messages.add(ChatMessage(GREETING, false))
         state = BroState.IDLE
@@ -413,85 +557,4 @@ fun BroScreen() {
                 Text(
                     text = "BRO",
                     color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(text = state.label, color = state.color, fontSize = 14.sp)
-            }
-            Row {
-                TextButton(onClick = {
-                    if (state == BroState.LISTENING) {
-                        voice.cancel()
-                        partial = ""
-                        state = BroState.IDLE
-                    }
-                    showVoices = true
-                }) { Text("Voice") }
-                TextButton(onClick = { newChat() }) { Text("New chat") }
-            }
-        }
-
-        if (partial.isNotEmpty()) {
-            Text(text = partial, color = Color.Gray, fontSize = 14.sp)
-        }
-
-        BroOrb(
-            state = state,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-        )
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(messages) { m ->
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = if (m.fromUser) Alignment.CenterEnd else Alignment.CenterStart
-                ) {
-                    Text(
-                        text = m.text,
-                        color = Color.White,
-                        modifier = Modifier
-                            .background(
-                                if (m.fromUser) Color(0xFF1E3A5F) else Color(0xFF1B1F2E),
-                                RoundedCornerShape(14.dp)
-                            )
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Type to BRO...") },
-                singleLine = true
-            )
-            Button(onClick = { onMicClick() }) {
-                Text(
-                    when (state) {
-                        BroState.LISTENING -> "Stop"
-                        BroState.SPEAKING -> "Silence"
-                        else -> "Mic"
-                    }
-                )
-            }
-            Button(onClick = { send() }) { Text("Send") }
-        }
-    }
-}
+             
