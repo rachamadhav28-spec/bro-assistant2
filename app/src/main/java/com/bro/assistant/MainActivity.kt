@@ -68,7 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class BroState(val label: String, val color: Color, val periodMs: Int) {
-    IDLE("Idle", Color(0xFF3FA9F5), 2600),
+    IDLE("navi", Color(0xFF3FA9F5), 2600),
     LISTENING("Listening...", Color(0xFF00E5A8), 900),
     THINKING("Thinking...", Color(0xFFB388FF), 700),
     EXECUTING("Executing...", Color(0xFFFFB300), 500),
