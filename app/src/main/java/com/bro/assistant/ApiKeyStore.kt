@@ -15,10 +15,12 @@ class ApiKeyStore(context: Context) {
     }
 
     fun clear() {
-        prefs.edit().remove(KEY).apply()
+        prefs.edit().remove(KEY).remove(OLD_KEY).apply()
     }
 
     companion object {
-        private const val KEY = "ai_key"
+        // New name, so an old Anthropic key saved earlier is ignored.
+        private const val KEY = "gemini_key"
+        private const val OLD_KEY = "ai_key"
     }
 }
