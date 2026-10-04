@@ -12,7 +12,8 @@ class VoiceInput(
     private val onReady: () -> Unit,
     private val onPartial: (String) -> Unit,
     private val onFinalText: (String) -> Unit,
-    private val onFailed: (String) -> Unit
+    private val onFailed: (String) -> Unit,
+    private val onLevel: (Float) -> Unit = {}
 ) {
     private var recognizer: SpeechRecognizer? = null
 
@@ -36,7 +37,11 @@ class VoiceInput(
 
             override fun onBeginningOfSpeech() {}
 
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                if (recognizer === r) {
+                    onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
+                }
+            }
 
             override fun onBufferReceived(buffer: ByteArray?) {}
 
