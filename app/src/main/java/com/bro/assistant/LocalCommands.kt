@@ -17,6 +17,7 @@ sealed class Command {
     object Screenshot : Command()
     object TellTime : Command()
     object TellDate : Command()
+    object TellDateTime : Command()
     object Greeting : Command()
     object WhoAreYou : Command()
     object Help : Command()
@@ -34,17 +35,26 @@ data class Reply(val text: String, val result: BroState)
 object LocalCommands {
 
     private const val NEEDS_AI_TEXT =
-        "That is a more complex request, so it needs my AI brain, which comes in a later stage. " +
-            "For now, try a simple command like open YouTube."
+        "That is a more complex request, so it needs my AI brain. " +
+            "Tap AI and paste your key, or try a simple command like open YouTube."
 
+    // Wake words and polite starters that are removed before understanding.
     private val prefixRegexes = listOf(
         Regex("""^(?:(?:hey|ok|okay|hi) +)?(?:bro|navi)\b[ ,.!:]*""", RegexOption.IGNORE_CASE),
-        Regex("""^(?:please|now|can you|could you|will you|would you|just)\b[ ,]*""", RegexOption.IGNORE_CASE)
+        Regex(
+            """^(?:please|now|can you|could you|will you|would you|just|i want to|i wanna|i need to|i would like to|i'd like to|let's|lets|let us)\b[ ,]*""",
+            RegexOption.IGNORE_CASE
+        )
     )
+
+    // Filler words removed from the end ("what is the time now", "open youtube please").
+    private val trailingFiller = Regex(""" (?:right now|please|plz|now|for me|once|quickly|bro|navi)$""")
+
+    // Other ways of saying "open": launch, run, go to, take me to ...
+    private val openVerbRegex = Regex("""^(?:open up|launch|run|go to|take me to|switch to|bring up|start up) """)
 
     private val nonWordRegex = Regex("[^\\p{L}\\p{N}:' ]")
     private val spaceRegex = Regex("\\s+")
-    private val trailingBro = Regex(""" (?:bro|navi)$""")
 
     private val sendRegex = Regex(
         """^(?:open (\p{L}+) and )?(?:send|message|text|msg|tell) +(?:a +)?(?:(?:message|text) +)?(?:to +)?(\p{L}[\p{L} ]*?) *(?::\s*|(?:saying|that says|that)\s+)(.+)$""",
@@ -58,49 +68,98 @@ object LocalCommands {
 
     private val homePhrases = setOf(
         "go home", "home", "go to home", "go to home screen", "go to the home screen",
-        "home screen", "open home", "open home screen", "open the home screen"
+        "home screen", "open home", "open home screen", "open the home screen",
+        "take me home", "main screen", "open main screen"
     )
-    private val backPhrases = setOf("go back", "back", "press back", "go to previous screen")
+    private val backPhrases = setOf(
+        "go back", "back", "press back", "go to previous screen", "previous screen",
+        "open previous screen", "open back", "take me back"
+    )
 
-    private val timeAsk = Regex(
-        """^(?:what is the time|what's the time|what time is it|tell me the time|current time|time now|time|what is the time now|what time is it now)$"""
+    // Time and date questions: every word must be a known, harmless word.
+    private val timeVocab = setOf(
+        "what", "whats", "what's", "is", "the", "time", "now", "current", "tell", "me", "it",
+        "right", "today", "exactly", "say", "show", "give", "my", "phone", "local", "clock",
+        "do", "you", "have", "got", "know", "a", "of", "us",
+        "kya", "hai", "hua", "abhi", "kitne", "baje", "hain"
     )
-    private val dateAsk = Regex(
-        """^(?:what is the date|what's the date|today's date|what is today's date|what day is it|what is today|what's today|date|tell me the date)$"""
+    private val dateVocab = setOf(
+        "what", "whats", "what's", "is", "the", "date", "today", "today's", "todays", "tell",
+        "me", "which", "day", "it", "current", "now", "show", "give", "my", "month", "of",
+        "right", "exactly", "say", "us", "a", "phone", "local",
+        "aaj", "ki", "tareekh", "tarikh", "kya", "hai"
     )
-    private val greetAsk = Regex(
-        """^(?:hi|hello|hey|hey there|hi there|hello there|good morning|good afternoon|good evening|wake up|are you there|are you hearing|are you hearing me|you there|can you hear me)$"""
+    private val dateWords = setOf("date", "day", "today", "today's", "todays", "tareekh", "tarikh", "aaj")
+
+    private val greetWords = setOf(
+        "hi", "hii", "hiii", "hello", "hey", "hey there", "hi there", "hello there", "yo", "sup",
+        "namaste", "good morning", "good afternoon", "good evening", "good night",
+        "wake up", "are you there", "are you hearing", "are you hearing me", "you there",
+        "can you hear me", "do you hear me", "how are you", "whats up", "what's up"
     )
     private val whoAsk = Regex(
-        """^(?:who are you|what is your name|what's your name|what are you|tell me about yourself)$"""
+        """^(?:who are you|what is your name|what's your name|whats your name|what are you|tell me about yourself|introduce yourself)$"""
     )
-    private val thanksAsk = Regex("""^(?:thanks|thank you|thanks a lot|thank you very much)$""")
-    private val helpAsk = Regex("""^(?:help|what can you do|what all can you do|what are your features)$""")
+    private val thanksAsk = Regex("""^(?:thanks|thank you|thanks a lot|thank you very much|thanks bro|thx|ok thanks|okay thanks)$""")
+    private val helpAsk = Regex("""^(?:help|what can you do|what all can you do|what are your features|how can you help me|what do you do)$""")
 
-    private val ytA = Regex("""^(?:open youtube(?: and)? )?(?:search|find|play) (?:on )?youtube (?:for )?(.+)$""")
-    private val ytB = Regex("""^(?:search|find|play) (?:for )?(.+) on youtube$""")
+    private val ytA = Regex("""^(?:open youtube(?: and)? )?(?:search|find|play) (?:on |in )?youtube (?:for )?(.+)$""")
+    private val ytB = Regex("""^(?:search|find|play|look up) (?:for )?(.+) (?:on|in) youtube$""")
     private val ytC = Regex("""^open youtube(?: and)? search(?: for)? (.+)$""")
-    private val webSearch = Regex("""^(?:search|google|look up)(?: the web)?(?: for)? (.+)$""")
-    private val callRegex = Regex("""^(?:call|phone|dial) (.+)$""")
-    private val alarmRegex = Regex("""^(?:set|create|make)(?: an| a)? alarm(?: for| at)? (.+)$""")
-    private val alarmNoTime = Regex("""^(?:set|create|make)(?: an| a)? alarm$""")
-    private val timeRegex = Regex("""^(\d{1,2})(?::(\d{2}))?\s*(a m|p m|am|pm)?$""")
+    private val webSearch = Regex("""^(?:search|google|look up)(?: the web| online| on google| in google)?(?: for)? (.+?)(?: on google| in google| online)?$""")
+    private val callRegex = Regex("""^(?:call|phone|dial|ring|make a call to|give a call to|place a call to) (.+)$""")
+    private val alarmNoTime = Regex("""^(?:set|create|make|add)(?: me)?(?: an| a)? alarm$""")
+    private val alarmMain = Regex("""^(?:set|create|make|add)(?: me)?(?: an| a)? alarm(?: for| at)? (.+)$""")
+    private val alarmAlt1 = Regex("""^alarm(?: for| at)? (.+)$""")
+    private val alarmAlt2 = Regex("""^wake me(?: up)?(?: at| by)? (.+)$""")
+    private val alarmAlt3 = Regex("""^(?:set|create|make|add)(?: me)?(?: an| a)? (.+?) alarm$""")
+    private val timeRegex = Regex("""^(\d{1,2})(?:[: ](\d{2}))?\s*(a m|p m|am|pm)?$""")
     private val settingsRegex = Regex(
-        """^open (?:the )?(?:(wi fi|wifi|bluetooth|display|sound|battery|location|apps|notifications|notification|accessibility) )?settings$"""
+        """^(?:open )?(?:the )?(?:(wi fi|wifi|bluetooth|display|sound|battery|location|apps|notifications|notification|accessibility) )?settings$"""
     )
-    private val openRegex = Regex("""^(?:open|launch|start) (?:the )?(.+?)(?: app)?$""")
+    private val openFullRegex = Regex("""^(?:open|start) (?:the )?(.+)$""")
+    private val openRegex = Regex("""^(?:open|start) (?:the )?(.+?)(?: app| application)?$""")
+    private val openHinglish = Regex("""^(.+?)(?: app)? (?:kholo|khol do|khol de|open karo|open kar do|open kar)$""")
     private val messageNoText = Regex("""^(?:message|text|msg) (.+)$""")
 
     private val appAliases = mapOf(
         "whatsapp" to "WhatsApp",
         "whats app" to "WhatsApp",
         "what's app" to "WhatsApp",
+        "watsapp" to "WhatsApp",
+        "wa" to "WhatsApp",
         "youtube" to "YouTube",
         "you tube" to "YouTube",
+        "yt" to "YouTube",
         "instagram" to "Instagram",
         "insta" to "Instagram",
+        "insta gram" to "Instagram",
+        "ig" to "Instagram",
         "gmail" to "Gmail",
-        "chrome" to "Chrome"
+        "g mail" to "Gmail",
+        "email" to "Gmail",
+        "chrome" to "Chrome",
+        "google chrome" to "Chrome",
+        "maps" to "Google Maps",
+        "google maps" to "Google Maps",
+        "play store" to "Play Store",
+        "playstore" to "Play Store",
+        "photos" to "Photos",
+        "gallery" to "Gallery",
+        "camera" to "Camera",
+        "calculator" to "Calculator",
+        "clock" to "Clock",
+        "contacts" to "Contacts",
+        "phone" to "Phone",
+        "dialer" to "Phone",
+        "messages" to "Messages",
+        "sms" to "Messages",
+        "telegram" to "Telegram",
+        "facebook" to "Facebook",
+        "snapchat" to "Snapchat",
+        "spotify" to "Spotify",
+        "twitter" to "X",
+        "x" to "X"
     )
 
     private fun ok(c: Command): ParseResult = ParseResult.Understood(c)
@@ -129,13 +188,18 @@ object LocalCommands {
         return t
     }
 
-    /** Lowercase, no punctuation (keeps ' and :), wake words removed. */
+    /** Lowercase, no punctuation (keeps ' and :), wake words and filler removed, "launch" etc. become "open". */
     private fun normalize(raw: String): String {
         var t = raw.lowercase(Locale.ROOT).replace('’', '\'')
         t = nonWordRegex.replace(t, " ")
         t = spaceRegex.replace(t, " ").trim()
         t = stripPrefixes(t)
-        t = trailingBro.replace(t, "")
+        var previous: String
+        do {
+            previous = t
+            t = trailingFiller.replace(t, "").trim()
+        } while (t != previous)
+        t = openVerbRegex.replace(t, "open ")
         return t.trim()
     }
 
@@ -160,10 +224,19 @@ object LocalCommands {
         return Pair(hour, minute)
     }
 
+    private fun alarmResult(timeText: String): ParseResult {
+        val t = parseTime(timeText)
+            ?: return ParseResult.Unclear(
+                "I couldn't read that time. Say it like: set an alarm for 7 30 AM."
+            )
+        return ok(Command.SetAlarm(t.first, t.second))
+    }
+
     fun parse(raw: String): ParseResult {
         val n = normalize(raw)
         if (n.isEmpty()) return ok(Command.Greeting)
         val original = cleanOriginal(raw)
+        val words = n.split(" ").filter { it.isNotEmpty() }
 
         // 1. Message with content (checked first so the message text may contain any words)
         val sm = sendRegex.matchEntire(original)
@@ -182,40 +255,46 @@ object LocalCommands {
         // 3. Simple phone actions
         if (n in homePhrases) return ok(Command.GoHome)
         if (n in backPhrases) return ok(Command.GoBack)
-        if (n.contains("screenshot")) return ok(Command.Screenshot)
+        if (n.contains("screenshot") || n.contains("screen shot")) return ok(Command.Screenshot)
 
-        // 4. Questions BRO can answer for real
-        if (timeAsk.matches(n)) return ok(Command.TellTime)
-        if (dateAsk.matches(n)) return ok(Command.TellDate)
-        if (greetAsk.matches(n)) return ok(Command.Greeting)
+        // 4. Time and date questions in many wordings
+        val hasTime = words.contains("time") || words.contains("baje")
+        val hasDate = words.any { it in dateWords }
+        if (hasTime && hasDate && words.all { it in timeVocab || it in dateVocab || it == "and" }) {
+            return ok(Command.TellDateTime)
+        }
+        if (hasTime && words.all { it in timeVocab }) return ok(Command.TellTime)
+        if (hasDate && (words.size >= 2 || words.contains("date")) && words.all { it in dateVocab }) {
+            return ok(Command.TellDate)
+        }
+
+        // 5. Small talk
+        if (n in greetWords) return ok(Command.Greeting)
         if (whoAsk.matches(n)) return ok(Command.WhoAreYou)
         if (thanksAsk.matches(n)) return ok(Command.Thanks)
         if (helpAsk.matches(n)) return ok(Command.Help)
 
-        // 5. YouTube search
+        // 6. YouTube search
         val yt = ytA.matchEntire(n) ?: ytB.matchEntire(n) ?: ytC.matchEntire(n)
         if (yt != null) return ok(Command.SearchYouTube(yt.groupValues[1].trim()))
 
-        // 6. Web search
+        // 7. Web search
         val web = webSearch.matchEntire(n)
         if (web != null) return ok(Command.SearchWeb(web.groupValues[1].trim()))
 
-        // 7. Call
+        // 8. Call
         val call = callRegex.matchEntire(n)
         if (call != null) return ok(Command.Call(titleCase(call.groupValues[1].trim())))
 
-        // 8. Alarm
+        // 9. Alarm
         if (alarmNoTime.matches(n)) return ParseResult.Unclear("What time should I set the alarm for?")
-        val alarm = alarmRegex.matchEntire(n)
-        if (alarm != null) {
-            val t = parseTime(alarm.groupValues[1])
-                ?: return ParseResult.Unclear(
-                    "I couldn't read that time. Say it like: set an alarm for 7 30 AM."
-                )
-            return ok(Command.SetAlarm(t.first, t.second))
-        }
+        val alarm = alarmMain.matchEntire(n)
+            ?: alarmAlt2.matchEntire(n)
+            ?: alarmAlt3.matchEntire(n)
+            ?: alarmAlt1.matchEntire(n)
+        if (alarm != null) return alarmResult(alarm.groupValues[1])
 
-        // 9. Settings (before the general "open" rule)
+        // 10. Settings (before the general "open" rule)
         val st = settingsRegex.matchEntire(n)
         if (st != null) {
             val page = st.groupValues[1]
@@ -227,15 +306,20 @@ object LocalCommands {
             return ok(Command.OpenSettings(shown))
         }
 
-        // 10. Open an app
-        val open = openRegex.matchEntire(n)
+        // 11. Open an app
+        if (n == "open") return ParseResult.Unclear("Which app should I open?")
+        val fullName = openFullRegex.matchEntire(n)?.groupValues?.get(1)?.trim()
+        if (fullName != null && appAliases.containsKey(fullName)) {
+            return ok(Command.OpenApp(appAliases.getValue(fullName)))
+        }
+        val open = openRegex.matchEntire(n) ?: openHinglish.matchEntire(n)
         if (open != null) {
             val name = open.groupValues[1].trim()
-            if (name.contains(" and ")) return ParseResult.NeedsAi
+            if (name.isEmpty() || name.contains(" and ")) return ParseResult.NeedsAi
             return ok(Command.OpenApp(appName(name)))
         }
 
-        // 11. "message Rahul" with no text
+        // 12. "message Rahul" with no text
         val mn = messageNoText.matchEntire(n)
         if (mn != null) {
             return ParseResult.Unclear("What should I tell ${titleCase(mn.groupValues[1].trim())}?")
@@ -275,6 +359,13 @@ object LocalCommands {
         is Command.TellDate ->
             Reply(
                 "Today is ${SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date())}.",
+                BroState.SUCCESS
+            )
+
+        is Command.TellDateTime ->
+            Reply(
+                "It's ${SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())} on " +
+                    "${SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date())}.",
                 BroState.SUCCESS
             )
 
