@@ -78,7 +78,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class BroState(val label: String, val color: Color, val periodMs: Int) {
-    IDLE("Ready", Color(0xFF3FA9F5), 2600),
+    IDLE("Navi", Color(0xFF3FA9F5), 2600),
     LISTENING("Listening...", Color(0xFF00E5A8), 900),
     THINKING("Thinking...", Color(0xFFB388FF), 700),
     EXECUTING("Executing...", Color(0xFFFFB300), 500),
@@ -93,7 +93,8 @@ class JobHolder {
     var job: Job? = null
 }
 
-const val GREETING = "Hi, I'm BRO. Tap Mic and talk, or type a message. I'll answer out loud."
+const val GREETING =
+    "Hi, I'm BRO. Tap Mic and talk, or type. Try: what time is it, open YouTube, or set an alarm for 7 AM."
 
 private val TWO_PI = (2.0 * Math.PI).toFloat()
 
@@ -331,7 +332,7 @@ fun BroScreen() {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
-    // Shows SUCCESS or ERROR for a moment, then returns to IDLE.
+    // Shows SUCCESS, ERROR or IDLE for a moment, then returns to IDLE.
     fun showResultThenIdle() {
         scope.launch {
             val shown = afterSpeech
@@ -363,9 +364,10 @@ fun BroScreen() {
     }
 
     // BRO says something: shows it in chat and speaks it when voice is ready.
-    fun botSay(text: String, error: Boolean = false) {
+    // "result" is the animation shown after speaking (SUCCESS, ERROR or IDLE).
+    fun botSay(text: String, result: BroState = BroState.SUCCESS) {
         messages.add(ChatMessage(text, false))
-        afterSpeech = if (error) BroState.ERROR else BroState.SUCCESS
+        afterSpeech = result
         if (ttsReady && speaker.speak(text)) {
             state = BroState.SPEAKING
         } else {
@@ -380,17 +382,18 @@ fun BroScreen() {
         }
     }
 
-    // Demo pipeline (real understanding and actions come in later stages)
+    // Stage 6: local command recognition (no internet, no AI)
     fun handleUserText(text: String) {
         speaker.stop()
         jobs.job?.cancel()
         messages.add(ChatMessage(text, true))
         jobs.job = scope.launch {
             state = BroState.THINKING
-            delay(800)
+            delay(500)
+            val reply = LocalCommands.respond(text)
             state = BroState.EXECUTING
-            delay(800)
-            botSay("(Demo) I received: $text")
+            delay(500)
+            botSay(reply.text, reply.result)
         }
     }
 
@@ -407,7 +410,7 @@ fun BroScreen() {
             onFailed = { msg ->
                 partial = ""
                 level = 0f
-                botSay(msg, error = true)
+                botSay(msg, BroState.ERROR)
             },
             onLevel = { level = it }
         )
@@ -437,7 +440,7 @@ fun BroScreen() {
                     "Microphone permission is blocked. Tap Mic again to open Settings and allow it."
                 else
                     "I need microphone permission to hear you. Tap Mic to try again.",
-                error = true
+                BroState.ERROR
             )
         }
     }
@@ -548,7 +551,6 @@ fun BroScreen() {
             .imePadding()
             .padding(12.dp)
     ) {
-        // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -558,22 +560,29 @@ fun BroScreen() {
                 Text(
                     text = "BRO",
                     color = Color.White,
-                    fontSize = 26.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    text = state.label,
-                    color = state.color,
-                    fontSize = 13.sp
-                )
+                Text(text = state.label, color = state.color, fontSize = 14.sp)
             }
             Row {
-                TextButton(onClick = { showVoices = true }) { Text("Voice") }
-                TextButton(onClick = { newChat() }) { Text("New") }
+                TextButton(onClick = {
+                    if (state == BroState.LISTENING) {
+                        voice.cancel()
+                        partial = ""
+                        level = 0f
+                        state = BroState.IDLE
+                    }
+                    showVoices = true
+                }) { Text("Voice") }
+                TextButton(onClick = { newChat() }) { Text("New chat") }
             }
         }
 
-        // Animated orb
+        if (partial.isNotEmpty()) {
+            Text(text = partial, color = Color.Gray, fontSize = 14.sp)
+        }
+
         BroOrb(
             state = state,
             level = level,
@@ -582,39 +591,24 @@ fun BroScreen() {
                 .height(220.dp)
         )
 
-        // Live speech preview
-        if (partial.isNotEmpty()) {
-            Text(
-                text = partial,
-                color = Color(0xFF9FB3C8),
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            )
-        }
-
-        // Chat
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(messages) { m ->
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     contentAlignment = if (m.fromUser) Alignment.CenterEnd else Alignment.CenterStart
                 ) {
                     Text(
                         text = m.text,
                         color = Color.White,
-                        fontSize = 15.sp,
                         modifier = Modifier
                             .background(
-                                if (m.fromUser) Color(0xFF1E3A5F) else Color(0xFF151A2B),
+                                if (m.fromUser) Color(0xFF1E3A5F) else Color(0xFF1B1F2E),
                                 RoundedCornerShape(14.dp)
                             )
                             .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -623,7 +617,6 @@ fun BroScreen() {
             }
         }
 
-        // Input row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -634,14 +627,20 @@ fun BroScreen() {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
-                placeholder = { Text("Type a message") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Type to BRO...") },
+                singleLine = true
             )
-            Button(onClick = { send() }) { Text("Send") }
             Button(onClick = { onMicClick() }) {
-                Text(if (state == BroState.LISTENING) "Stop" else "Mic")
+                Text(
+                    when (state) {
+                        BroState.LISTENING -> "Stop"
+                        BroState.SPEAKING -> "Silence"
+                        else -> "Mic"
+                    }
+                )
             }
+            Button(onClick = { send() }) { Text("Send") }
         }
     }
 }
