@@ -150,6 +150,8 @@ object LocalCommands {
     private val settingsRegex = Regex(
         """^(?:open )?(?:the )?(?:(wi fi|wifi|bluetooth|display|sound|battery|location|apps|notifications|notification|accessibility) )?settings$"""
     )
+    // Words that mean "open X" is really a bigger task ("open instagram search ram").
+    private val appTaskWords = setOf("search", "chat", "check", "find", "send", "read", "message", "tell", "post")
     private val openFullRegex = Regex("""^(?:open|start) (?:the )?(.+)$""")
     private val openRegex = Regex("""^(?:open|start) (?:the )?(.+?)(?: app| application)?$""")
     private val openHinglish = Regex("""^(.+?)(?: app)? (?:kholo|khol do|khol de|open karo|open kar do|open kar)$""")
@@ -288,7 +290,10 @@ object LocalCommands {
         // 3. Simple phone actions
         if (n in homePhrases) return ok(Command.GoHome)
         if (n in backPhrases) return ok(Command.GoBack)
-        if (n.contains("screenshot") || n.contains("screen shot")) return ok(Command.Screenshot)
+        if (n.contains("screenshot") || n.contains("screen shot")) {
+            // A short "take a screenshot" is for the current screen; longer sentences (open X and ...) go to the planner.
+            return if (words.size <= 5 && !n.startsWith("open ")) ok(Command.Screenshot) else ParseResult.NeedsAi
+        }
         if (n in playFirstPhrases) return ok(Command.PlayFirst)
 
         // 4. Time and date questions in many wordings
@@ -349,7 +354,12 @@ object LocalCommands {
         val open = openRegex.matchEntire(n) ?: openHinglish.matchEntire(n)
         if (open != null) {
             val name = open.groupValues[1].trim()
-            if (name.isEmpty() || name.contains(" and ")) return ParseResult.NeedsAi
+            val nameWords = name.split(" ").filter { it.isNotEmpty() }
+            if (name.isEmpty() || name.contains(" and ") || nameWords.size > 3 ||
+                nameWords.any { it in appTaskWords }
+            ) {
+                return ParseResult.NeedsAi
+            }
             return ok(Command.OpenApp(appName(name)))
         }
 
@@ -419,7 +429,7 @@ object LocalCommands {
                 "I can open apps, search YouTube or the web, open Settings, set alarms, call your contacts, " +
                     "go to the home screen, and tell you the time and date. " +
                     "With the Accessibility Service switched on, I can also press Back, take a screenshot " +
-                    "and play the first YouTube result. Messaging inside apps comes in a later stage. " +
+                    "and play the first YouTube result. With my AI key I can also work inside apps like WhatsApp and Instagram, step by step. " +
                     "For anything more complex, add your AI key under AI.",
                 BroState.SUCCESS
             )
