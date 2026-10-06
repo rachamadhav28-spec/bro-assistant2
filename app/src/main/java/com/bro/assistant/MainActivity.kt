@@ -339,6 +339,8 @@ fun BroScreen() {
     val jobs = remember { JobHolder() }
     val keyStore = remember { ApiKeyStore(context) }
     val executor = remember { TaskExecutor(context) }
+    val agent = remember { AgentRunner(context) }
+    val agentGate = remember { AgentGate() }
     val settings = remember { AppSettings(context) }
     var askFirst by remember { mutableStateOf(settings.askFirst()) }
     var pending by remember { mutableStateOf<Confirmation?>(null) }
@@ -454,6 +456,50 @@ fun BroScreen() {
         }
     }
 
+    // Stage 12: BRO looks at the screen and works inside apps, one checked step at a time.
+    suspend fun runAgent(goal: String) {
+        val key = keyStore.get()
+        if (key.isBlank()) {
+            botSay("Working inside apps needs my AI brain. Tap AI at the top and paste your key first.", BroState.IDLE)
+            return
+        }
+        if (!BroAccess.isOn) {
+            needsAccess = true
+            botSay(
+                "To work inside apps I need the Accessibility Service. Tap the button below to turn it on.",
+                BroState.IDLE,
+                "To work inside apps I need the Accessibility Service."
+            )
+            return
+        }
+        needsAccess = false
+        state = BroState.EXECUTING
+        val chat = buildHistory().joinToString("\n") { (role, text) -> "$role: $text" }
+        val outcome = agent.run(
+            goal = goal,
+            chat = chat,
+            apiKey = key,
+            askFirst = askFirst,
+            onStep = { line -> messages.add(ChatMessage("- $line", false)) },
+            confirm = { question ->
+                pending = Confirmation(question, ActionPlan(emptyList()))
+                botSay(question, BroState.IDLE)
+                try {
+                    agentGate.ask()
+                } finally {
+                    pending = null
+                    state = BroState.EXECUTING
+                }
+            }
+        )
+        val result = when (outcome.kind) {
+            AgentKind.DONE -> BroState.SUCCESS
+            AgentKind.FAILED -> BroState.ERROR
+            else -> BroState.IDLE
+        }
+        botSay(outcome.text, result)
+    }
+
     LaunchedEffect(contactsAnswer) {
         val granted = contactsAnswer
         if (granted != null) {
@@ -478,6 +524,16 @@ fun BroScreen() {
     // Stage 6 local commands first; Stage 7 AI only when local parsing cannot understand.
     fun handleUserText(text: String) {
         speaker.stop()
+        // A task is waiting for Yes or No in the middle of its work: answer it, don't cancel it.
+        if (agentGate.waiting) {
+            messages.add(ChatMessage(text, true))
+            when (Confirm.answer(text)) {
+                true -> agentGate.answer(true)
+                false -> agentGate.answer(false)
+                null -> messages.add(ChatMessage("Please answer yes or no. I'm waiting.", false))
+            }
+            return
+        }
         jobs.job?.cancel()
         messages.add(ChatMessage(text, true))
 
@@ -513,7 +569,11 @@ fun BroScreen() {
                     null
                 }
                 if (localPlan != null) {
-                    runPlan(localPlan, false)
+                    if (localPlan.actions.any { it.type in AGENT_TYPES }) {
+                        runAgent(text)
+                    } else {
+                        runPlan(localPlan, false)
+                    }
                 } else {
                     botSay(reply.text, reply.result)
                 }
@@ -532,6 +592,10 @@ fun BroScreen() {
             when (val r = AiClient.ask(key, buildHistory())) {
                 is AiResult.Failure -> botSay(r.message, BroState.ERROR)
                 is AiResult.Plan -> {
+                    if (r.kind == "agent") {
+                        runAgent(text)
+                        return@launch
+                    }
                     if (r.kind == "plan" && r.steps.isNotEmpty()) {
                         when (val check = ActionPlanner.fromAi(r.steps)) {
                             is PlanCheck.Invalid -> botSay(
@@ -540,7 +604,12 @@ fun BroScreen() {
                                 BroState.ERROR,
                                 "I could not make a safe plan for that."
                             )
-                            is PlanCheck.Valid -> runPlan(check.plan, false)
+                            is PlanCheck.Valid ->
+                                if (check.plan.actions.any { it.type in AGENT_TYPES }) {
+                                    runAgent(text)
+                                } else {
+                                    runPlan(check.plan, false)
+                                }
                         }
                     } else {
                         val answer = r.reply.ifBlank { "I'm not sure how to help with that." }
@@ -728,8 +797,8 @@ fun BroScreen() {
                         )
                     }
                     Text(
-                        text = if (BroAccess.isOn) "Accessibility Service: ON (Back, screenshot, play first result)."
-                        else "Accessibility Service: OFF. Needed for Back, screenshot and play first result.",
+                        text = if (BroAccess.isOn) "Accessibility Service: ON (Back, screenshot, play first result, work inside apps)."
+                        else "Accessibility Service: OFF. Needed for Back, screenshot, play first result and working inside apps.",
                         fontSize = 14.sp,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
