@@ -40,7 +40,8 @@ data class ExecutionOutcome(
     val spoken: String,
     val result: BroState,
     val confirmation: Confirmation? = null,
-    val permissionsNeeded: List<String> = emptyList()
+    val permissionsNeeded: List<String> = emptyList(),
+    val needsAccessibility: Boolean = false
 )
 
 /** Understands "yes" / "no" answers, in English and a little Hinglish. */
@@ -91,7 +92,14 @@ class TaskExecutor(private val context: Context) {
         ActionType.CALL
     )
 
-    private val supported = launching + ActionType.SET_ALARM
+    // Steps done through the Accessibility Service (only when the person switched it on).
+    private val accessSteps = setOf(
+        ActionType.GO_BACK,
+        ActionType.SCREENSHOT,
+        ActionType.PLAY_FIRST_RESULT
+    )
+
+    private val supported = launching + ActionType.SET_ALARM + accessSteps
 
     private class Prepared(val plan: ActionPlan, val early: ExecutionOutcome?)
 
@@ -101,6 +109,11 @@ class TaskExecutor(private val context: Context) {
         if (early != null) return early
 
         val actions = prepared.plan.actions
+        // Don't open anything if a later step can't be done anyway.
+        if (actions.any { it.type in accessSteps } && BroAccess.driver == null) {
+            return ExecutionOutcome(emptyList(), ACCESS_OFF, "That needs the Accessibility Service, and it is off.",
+                BroState.IDLE, needsAccessibility = true)
+        }
         val outcomes = mutableListOf<StepOutcome>()
         var launched = false
         var stopped = false
@@ -128,6 +141,13 @@ class TaskExecutor(private val context: Context) {
 
             if (a.type == ActionType.SET_ALARM) {
                 val outcome = setAlarm(a)
+                outcomes.add(outcome)
+                if (!outcome.ok) stopped = true
+                continue
+            }
+
+            if (a.type in accessSteps) {
+                val outcome = accessStep(a, launched)
                 outcomes.add(outcome)
                 if (!outcome.ok) stopped = true
                 continue
@@ -231,10 +251,74 @@ class TaskExecutor(private val context: Context) {
 
     private fun notAvailable(a: TaskAction): String =
         if (a.type.method == Method.ACCESSIBILITY) {
-            "I understood: ${describe(a)}. That needs the Accessibility Service, which comes in Stages 11 to 14."
+            "I understood: ${describe(a)}. Working inside apps like that comes in Stages 12 to 14."
         } else {
             "I understood: ${describe(a)}. That isn't available yet."
         }
+
+    // ---------- Accessibility steps ----------
+
+    private suspend fun accessStep(a: TaskAction, afterLaunch: Boolean): StepOutcome {
+        val driver = BroAccess.driver ?: return fail(a, ACCESS_OFF)
+
+        // Give the app that was just opened a moment to draw itself.
+        if (afterLaunch) delay(AFTER_LAUNCH_MS)
+
+        return when (a.type) {
+            ActionType.GO_BACK -> {
+                if (driver.back()) {
+                    StepOutcome(a, ActionStatus.SUCCESS, Verification.VERIFIED, "Pressed Back.", true)
+                } else {
+                    fail(a, "Android refused the Back press.")
+                }
+            }
+
+            ActionType.SCREENSHOT -> {
+                // BRO's own screen is in front unless a step opened something else, so leave it first.
+                if (!afterLaunch) {
+                    driver.home()
+                    delay(HOME_SETTLE_MS)
+                }
+                if (driver.screenshot()) {
+                    val where = if (afterLaunch) "" else " of your home screen"
+                    StepOutcome(
+                        a, ActionStatus.SUCCESS, Verification.UNVERIFIABLE,
+                        "I asked Android to take a screenshot$where. It should be in your Gallery under Screenshots.",
+                        true
+                    )
+                } else {
+                    fail(a, "Your phone refused to take a screenshot.")
+                }
+            }
+
+            ActionType.PLAY_FIRST_RESULT -> playFirst(a, driver, afterLaunch)
+
+            else -> fail(a, "That step is not available yet.")
+        }
+    }
+
+    private suspend fun playFirst(a: TaskAction, driver: AccessDriver, afterLaunch: Boolean): StepOutcome {
+        var last = ClickResult.NOT_FOUND
+        var waited = 0
+        while (waited <= PLAY_WAIT_MS) {
+            last = driver.clickFirstVideo()
+            if (last == ClickResult.CLICKED) {
+                return StepOutcome(
+                    a, ActionStatus.SUCCESS, Verification.VERIFIED, "Tapped the first video result.", true
+                )
+            }
+            // Nothing to wait for if no app was opened by this plan and YouTube is not in front.
+            if (last == ClickResult.WRONG_APP && !afterLaunch) break
+            delay(PLAY_STEP_MS)
+            waited += PLAY_STEP_MS.toInt()
+        }
+        val text = if (last == ClickResult.WRONG_APP && !afterLaunch) {
+            "YouTube isn't on screen. Say: search cats on YouTube and play the first result."
+        } else {
+            "I couldn't find a video result on the screen. The results may not have loaded."
+        }
+        return fail(a, text)
+    }
 
     private fun fail(a: TaskAction, message: String): StepOutcome =
         StepOutcome(a, ActionStatus.FAILED, Verification.FAILED, message, false)
@@ -460,7 +544,7 @@ class TaskExecutor(private val context: Context) {
         if (outcomes.size == 1) {
             val m = outcomes[0].message
             val spoken = if (outcomes[0].ok || anyFailed) m else "I understood that, but I can't do it yet."
-            return ExecutionOutcome(outcomes, m, spoken, result)
+            return ExecutionOutcome(outcomes, m, spoken, result, needsAccessibility = m == ACCESS_OFF)
         }
 
         val header = when {
@@ -476,7 +560,10 @@ class TaskExecutor(private val context: Context) {
             anyFailed -> outcomes.first { it.status == ActionStatus.FAILED }.message
             else -> "I did the first part, but not the rest."
         }
-        return ExecutionOutcome(outcomes, header + "\n" + lines, spoken, result)
+        return ExecutionOutcome(
+            outcomes, header + "\n" + lines, spoken, result,
+            needsAccessibility = outcomes.any { it.message == ACCESS_OFF }
+        )
     }
 
     companion object {
@@ -485,5 +572,11 @@ class TaskExecutor(private val context: Context) {
         private const val VERIFY_STEP_MS = 150L
         private const val ALARM_WAIT_MS = 4000
         private const val ALARM_STEP_MS = 300L
+        private const val AFTER_LAUNCH_MS = 1200L
+        private const val HOME_SETTLE_MS = 1200L
+        private const val PLAY_WAIT_MS = 12000
+        private const val PLAY_STEP_MS = 700L
+        const val ACCESS_OFF =
+            "That needs BRO's Accessibility Service, and it is switched off. Tap the button below to turn it on."
     }
 }
