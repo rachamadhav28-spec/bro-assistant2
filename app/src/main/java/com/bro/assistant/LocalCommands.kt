@@ -15,6 +15,7 @@ sealed class Command {
     object GoHome : Command()
     object GoBack : Command()
     object Screenshot : Command()
+    object PlayFirst : Command()
     object TellTime : Command()
     object TellDate : Command()
     object TellDateTime : Command()
@@ -71,6 +72,13 @@ object LocalCommands {
         "home screen", "open home", "open home screen", "open the home screen",
         "take me home", "main screen", "open main screen"
     )
+    private val playFirstPhrases = setOf(
+        "play first result", "play the first result", "play first video", "play the first video",
+        "play first one", "play the first one", "open first result", "open the first result",
+        "open first video", "open the first video", "click first result", "click the first result",
+        "click first video", "click the first video", "tap first result", "tap the first result",
+        "play top result", "play the top result", "play first", "play the first"
+    )
     private val backPhrases = setOf(
         "go back", "back", "press back", "go to previous screen", "previous screen",
         "open previous screen", "open back", "take me back"
@@ -103,9 +111,34 @@ object LocalCommands {
     private val thanksAsk = Regex("""^(?:thanks|thank you|thanks a lot|thank you very much|thanks bro|thx|ok thanks|okay thanks)$""")
     private val helpAsk = Regex("""^(?:help|what can you do|what all can you do|what are your features|how can you help me|what do you do)$""")
 
-    private val ytA = Regex("""^(?:open youtube(?: and)? )?(?:search|find|play) (?:on |in )?youtube (?:for )?(.+)$""")
-    private val ytB = Regex("""^(?:search|find|play|look up) (?:for )?(.+) (?:on|in) youtube$""")
-    private val ytC = Regex("""^open youtube(?: and)? search(?: for)? (.+)$""")
+    // YouTube search in any word order: "search cats on youtube", "open youtube and search for cats",
+    // "cats youtube search", "youtube pe cats search karo" ... The name of the app is removed, then
+    // the search words around the topic are trimmed, and what is left is the topic.
+    private val ytNameRegex = Regex("""\b(?:youtube|you tube|yt)\b""")
+    private val ytVerbs = setOf(
+        "search", "find", "look", "lookup", "play", "watch", "show",
+        "dhundo", "dhoondo", "khojo"
+    )
+    private val ytLeading = setOf(
+        "open", "start", "and", "search", "find", "look", "lookup", "up", "for", "me", "play",
+        "watch", "show", "on", "in", "into", "please", "pls", "pe", "par", "mein", "kar", "karo"
+    )
+    private val ytTrailing = setOf(
+        "on", "in", "at", "for", "pe", "par", "mein", "search", "karo", "kar", "kro", "do",
+        "dhundo", "dhoondo", "khojo", "please", "pls", "and"
+    )
+
+    private fun youtubeQuery(n: String): String? {
+        if (!ytNameRegex.containsMatchIn(n)) return null
+        val words = ytNameRegex.replace(n, " ").split(" ").filter { it.isNotEmpty() }
+        if (words.none { it in ytVerbs }) return null
+        var from = 0
+        var to = words.size
+        while (from < to && words[from] in ytLeading) from++
+        while (to > from && words[to - 1] in ytTrailing) to--
+        if (from >= to) return null
+        return words.subList(from, to).joinToString(" ")
+    }
     private val webSearch = Regex("""^(?:search|google|look up)(?: the web| online| on google| in google)?(?: for)? (.+?)(?: on google| in google| online)?$""")
     private val callRegex = Regex("""^(?:call|phone|dial|ring|make a call to|give a call to|place a call to) (.+)$""")
     private val alarmNoTime = Regex("""^(?:set|create|make|add)(?: me)?(?: an| a)? alarm$""")
@@ -256,6 +289,7 @@ object LocalCommands {
         if (n in homePhrases) return ok(Command.GoHome)
         if (n in backPhrases) return ok(Command.GoBack)
         if (n.contains("screenshot") || n.contains("screen shot")) return ok(Command.Screenshot)
+        if (n in playFirstPhrases) return ok(Command.PlayFirst)
 
         // 4. Time and date questions in many wordings
         val hasTime = words.contains("time") || words.contains("baje")
@@ -275,8 +309,8 @@ object LocalCommands {
         if (helpAsk.matches(n)) return ok(Command.Help)
 
         // 6. YouTube search
-        val yt = ytA.matchEntire(n) ?: ytB.matchEntire(n) ?: ytC.matchEntire(n)
-        if (yt != null) return ok(Command.SearchYouTube(yt.groupValues[1].trim()))
+        val ytQuery = youtubeQuery(n)
+        if (ytQuery != null) return ok(Command.SearchYouTube(ytQuery))
 
         // 7. Web search
         val web = webSearch.matchEntire(n)
@@ -349,6 +383,7 @@ object LocalCommands {
         is Command.GoHome -> "go to the home screen"
         is Command.GoBack -> "go back"
         is Command.Screenshot -> "take a screenshot"
+        is Command.PlayFirst -> "play the first result"
         else -> "do that"
     }
 
@@ -383,7 +418,8 @@ object LocalCommands {
             Reply(
                 "I can open apps, search YouTube or the web, open Settings, set alarms, call your contacts, " +
                     "go to the home screen, and tell you the time and date. " +
-                    "Going back, taking screenshots and working inside apps come in later stages. " +
+                    "With the Accessibility Service switched on, I can also press Back, take a screenshot " +
+                    "and play the first YouTube result. Messaging inside apps comes in a later stage. " +
                     "For anything more complex, add your AI key under AI.",
                 BroState.SUCCESS
             )
