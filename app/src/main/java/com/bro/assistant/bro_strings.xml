@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bro_access_description">Lets BRO press Back, take a screenshot, and, when you give it a task, read the visible screen and tap, type and scroll inside apps. BRO does not store what is on your screen. For an in-app task, the visible screen text is sent to Google\'s Gemini AI to choose the next step. BRO never types passwords.</string>
+</resources>
