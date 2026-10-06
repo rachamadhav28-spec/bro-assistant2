@@ -21,28 +21,26 @@ sealed class AiResult {
 
 object AiClient {
     // To change the model later, change only this line.
-    private const val MODEL = "gemini-3.5-flash-lite"
-    private const val ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+    internal const val MODEL = "gemini-3.5-flash-lite"
+    internal const val ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
 
     private val SYSTEM_PROMPT = """
 You are the planning brain of BRO, a personal assistant on an Android phone.
 Reply with ONE JSON object only. No markdown, no code fences, no text outside the JSON.
 
 Schema:
-{"type":"chat|plan|clarify","reply":"short plain text","steps":[{"action":"...", ...fields}]}
+{"type":"chat|plan|clarify|agent","reply":"short plain text","steps":[{"action":"...", ...fields}]}
 
 Types:
 - "chat": the user is just talking or asking a question. Answer in reply. steps must be [].
 - "clarify": information is missing. Ask one short question in reply. steps must be [].
 - "plan": the user wants phone actions. List the steps in order. reply is a short sentence such as "Working on it."
+- "agent": the user wants something done INSIDE an app that the allowed actions below cannot express. Examples: send or read messages, search for a person and chat, check whether someone posted, read or find something on a screen. steps must be []. reply is a short sentence such as "On it."
 
 Allowed actions and their fields (use only these):
 - open_app {"app"}
 - search_youtube {"query"}
 - play_first_result {}
-- send_message {"app","contact","message"}
-- read_latest_message {"app"}
-- reply_message {"message"}
 - call {"contact"}
 - set_alarm {"hour","minute"}  (hour is 0-23, minute is 0-59)
 - open_settings {"page"}
@@ -53,7 +51,7 @@ Allowed actions and their fields (use only these):
 Rules:
 - Use the conversation to resolve words like him, her, it, there and "the same message" into real names and text.
 - Never invent a contact name or message text. If it is unclear, use type "clarify".
-- If the request cannot be done with the allowed actions, use type "chat" and say so briefly.
+- If the request is a task on the phone that the allowed actions cannot do, use type "agent". If it is not a phone task, use type "chat".
 - Never say a task is finished. You only plan.
 - Keep reply under 25 words. It will be spoken aloud, so no symbols or lists.
 
@@ -127,7 +125,7 @@ Example answer: {"type":"plan","reply":"Working on it.","steps":[{"action":"open
         }
     }
 
-    private fun errorMessage(code: Int, body: String): String {
+    internal fun errorMessage(code: Int, body: String): String {
         val detail = try {
             JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
         } catch (e: JSONException) {
