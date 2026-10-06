@@ -165,6 +165,7 @@ object ActionPlanner {
             is Command.GoHome -> Pair(ActionType.GO_HOME, emptyMap<String, String>())
             is Command.GoBack -> Pair(ActionType.GO_BACK, emptyMap<String, String>())
             is Command.Screenshot -> Pair(ActionType.SCREENSHOT, emptyMap<String, String>())
+            is Command.PlayFirst -> Pair(ActionType.PLAY_FIRST_RESULT, emptyMap<String, String>())
             else -> null
         }
         if (action == null) return null
