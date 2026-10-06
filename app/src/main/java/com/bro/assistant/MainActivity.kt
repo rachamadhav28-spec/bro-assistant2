@@ -1,5 +1,5 @@
 package com.bro.assistant
- 
+
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
@@ -78,7 +78,7 @@ import kotlin.math.sin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
- 
+
 enum class BroState(val label: String, val color: Color, val periodMs: Int) {
     IDLE("Navi", Color(0xFF3FA9F5), 2600),
     LISTENING("Listening...", Color(0xFF00E5A8), 900),
@@ -88,19 +88,19 @@ enum class BroState(val label: String, val color: Color, val periodMs: Int) {
     SUCCESS("Done", Color(0xFF66BB6A), 1200),
     ERROR("Error", Color(0xFFEF5350), 300)
 }
- 
+
 data class ChatMessage(val text: String, val fromUser: Boolean)
- 
+
 class JobHolder {
     var job: Job? = null
 }
- 
+
 const val GREETING =
     "Hi, I'm BRO. Tap Mic and talk, or type. Try: what time is it, open YouTube, " +
         "call Mom, or set an alarm for 7 AM. For complex commands, tap AI and paste your key."
- 
+
 private val TWO_PI = (2.0 * Math.PI).toFloat()
- 
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,14 +110,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
- 
+
     // Lets BRO notice that another app came to the front after it launched one.
     override fun onStop() {
         ForegroundState.stopCount += 1
         super.onStop()
     }
 }
- 
+
 private fun DrawScope.ringArcs(c: Offset, ringR: Float, color: Color, spin: Float) {
     drawArc(
         color = color,
@@ -138,13 +138,13 @@ private fun DrawScope.ringArcs(c: Offset, ringR: Float, color: Color, spin: Floa
         style = Stroke(width = 4f, cap = StrokeCap.Round)
     )
 }
- 
+
 @Composable
 fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
     val color by animateColorAsState(state.color, tween(500), label = "orbColor")
     val smoothLevel by animateFloatAsState(level, tween(90), label = "level")
     val transition = rememberInfiniteTransition(label = "orb")
- 
+
     val pulse by transition.animateFloat(
         initialValue = 0.88f,
         targetValue = 1.12f,
@@ -154,7 +154,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
         ),
         label = "pulse"
     )
- 
+
     val spinMs = when (state) {
         BroState.THINKING -> 1500
         BroState.EXECUTING -> 1800
@@ -166,21 +166,21 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
         animationSpec = infiniteRepeatable(tween(spinMs, easing = LinearEasing)),
         label = "spin"
     )
- 
+
     val wave by transition.animateFloat(
         initialValue = 0f,
         targetValue = TWO_PI,
         animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
         label = "wave"
     )
- 
+
     val ripple by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
         label = "ripple"
     )
- 
+
     Canvas(modifier = modifier) {
         val shake = if (state == BroState.ERROR) sin(wave * 8f) * 8f else 0f
         val c = Offset(size.width / 2f + shake, size.height / 2f)
@@ -188,7 +188,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
         val lvl = if (state == BroState.LISTENING) smoothLevel else 0f
         val coreR = base * 0.45f * pulse * (1f + 0.3f * lvl)
         val ringR = base * 0.72f
- 
+
         // Glow
         drawCircle(
             brush = Brush.radialGradient(
@@ -202,13 +202,13 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
         // Core
         drawCircle(color = color, radius = coreR, center = c)
         drawCircle(color = Color.White.copy(alpha = 0.25f), radius = coreR * 0.5f, center = c)
- 
+
         // State-specific animation
         when (state) {
             BroState.IDLE -> {
                 ringArcs(c, ringR, color, spin)
             }
- 
+
             BroState.LISTENING -> {
                 for (k in 0..1) {
                     val p = (ripple + k * 0.5f) % 1f
@@ -221,7 +221,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
                 }
                 ringArcs(c, ringR, color, spin)
             }
- 
+
             BroState.THINKING -> {
                 ringArcs(c, ringR, color, spin)
                 for (i in 0..2) {
@@ -233,7 +233,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
                     drawCircle(color = color, radius = 9f, center = pos)
                 }
             }
- 
+
             BroState.EXECUTING -> {
                 val active = ((spin * 2f) / 30f).toInt() % 12
                 for (i in 0 until 12) {
@@ -248,7 +248,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
                     )
                 }
             }
- 
+
             BroState.SPEAKING -> {
                 val n = 24
                 val r0 = coreR * 1.15f
@@ -266,7 +266,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
                     )
                 }
             }
- 
+
             BroState.SUCCESS -> {
                 drawCircle(
                     color = color.copy(alpha = 0.6f),
@@ -280,7 +280,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
                 drawLine(color = Color.White, start = a, end = b, strokeWidth = 10f, cap = StrokeCap.Round)
                 drawLine(color = Color.White, start = b, end = d, strokeWidth = 10f, cap = StrokeCap.Round)
             }
- 
+
             BroState.ERROR -> {
                 drawCircle(
                     color = color.copy(alpha = 0.6f),
@@ -307,7 +307,7 @@ fun BroOrb(state: BroState, level: Float, modifier: Modifier = Modifier) {
         }
     }
 }
- 
+
 @Composable
 fun VoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
@@ -319,13 +319,13 @@ fun VoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
             .padding(vertical = 10.dp)
     )
 }
- 
+
 @Composable
 fun BroScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
- 
+
     var state by remember { mutableStateOf(BroState.IDLE) }
     var input by remember { mutableStateOf("") }
     var partial by remember { mutableStateOf("") }
@@ -342,13 +342,14 @@ fun BroScreen() {
     val settings = remember { AppSettings(context) }
     var askFirst by remember { mutableStateOf(settings.askFirst()) }
     var pending by remember { mutableStateOf<Confirmation?>(null) }
+    var needsAccess by remember { mutableStateOf(false) }
     var waitingPlan by remember { mutableStateOf<ActionPlan?>(null) }
     var contactsAnswer by remember { mutableStateOf<Boolean?>(null) }
- 
+
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
- 
+
     // Shows SUCCESS, ERROR or IDLE for a moment, then returns to IDLE.
     fun showResultThenIdle() {
         scope.launch {
@@ -358,7 +359,7 @@ fun BroScreen() {
             if (state == shown) state = BroState.IDLE
         }
     }
- 
+
     val speaker = remember {
         Speaker(
             context = context,
@@ -379,7 +380,7 @@ fun BroScreen() {
             onSpeakingFinished = { showResultThenIdle() }
         )
     }
- 
+
     // BRO says something: shows "text" in chat and speaks "spoken" when voice is ready.
     // "result" is the animation shown after speaking (SUCCESS, ERROR or IDLE).
     fun botSay(text: String, result: BroState = BroState.SUCCESS, spoken: String = text) {
@@ -391,14 +392,14 @@ fun BroScreen() {
             showResultThenIdle()
         }
     }
- 
+
     fun previewVoice() {
         afterSpeech = BroState.SUCCESS
         if (ttsReady && speaker.speak("Hi, I'm BRO. This is how I sound.")) {
             state = BroState.SPEAKING
         }
     }
- 
+
     // Recent conversation for the AI: list of (role, text), starts and ends with "user".
     fun buildHistory(): List<Pair<String, String>> {
         val out = mutableListOf<Pair<String, String>>()
@@ -417,7 +418,7 @@ fun BroScreen() {
         }
         return out
     }
- 
+
     fun describeStep(index: Int, step: AiStep): String {
         val details = if (step.params.isEmpty()) {
             ""
@@ -426,17 +427,19 @@ fun BroScreen() {
         }
         return "${index + 1}. ${step.action}$details"
     }
- 
+
     val contactsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         contactsAnswer = result[Manifest.permission.READ_CONTACTS] == true
     }
- 
+
     // Runs a checked plan. It may ask for permission or for a yes first.
     suspend fun runPlan(plan: ActionPlan, confirmed: Boolean) {
         state = BroState.EXECUTING
+        needsAccess = false
         val outcome = executor.run(plan, confirmed, askFirst)
+        needsAccess = outcome.needsAccessibility
         val needed = outcome.permissionsNeeded
         val question = outcome.confirmation
         if (needed.isNotEmpty()) {
@@ -450,7 +453,7 @@ fun BroScreen() {
             botSay(outcome.text, outcome.result, outcome.spoken)
         }
     }
- 
+
     LaunchedEffect(contactsAnswer) {
         val granted = contactsAnswer
         if (granted != null) {
@@ -471,13 +474,13 @@ fun BroScreen() {
             }
         }
     }
- 
+
     // Stage 6 local commands first; Stage 7 AI only when local parsing cannot understand.
     fun handleUserText(text: String) {
         speaker.stop()
         jobs.job?.cancel()
         messages.add(ChatMessage(text, true))
- 
+
         val waiting = pending
         if (waiting != null) {
             val answer = Confirm.answer(text)
@@ -495,7 +498,7 @@ fun BroScreen() {
             }
             // Not a yes or no: the old request is dropped and this is handled as a new command.
         }
- 
+
         jobs.job = scope.launch {
             state = BroState.THINKING
             val local = LocalCommands.parse(text)
@@ -516,7 +519,7 @@ fun BroScreen() {
                 }
                 return@launch
             }
- 
+
             val key = keyStore.get()
             if (key.isBlank()) {
                 botSay(
@@ -525,7 +528,7 @@ fun BroScreen() {
                 )
                 return@launch
             }
- 
+
             when (val r = AiClient.ask(key, buildHistory())) {
                 is AiResult.Failure -> botSay(r.message, BroState.ERROR)
                 is AiResult.Plan -> {
@@ -547,7 +550,7 @@ fun BroScreen() {
             }
         }
     }
- 
+
     val voice = remember {
         VoiceInput(
             context = context,
@@ -566,14 +569,14 @@ fun BroScreen() {
             onLevel = { level = it }
         )
     }
- 
+
     DisposableEffect(Unit) {
         onDispose {
             voice.destroy()
             speaker.shutdown()
         }
     }
- 
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -595,7 +598,7 @@ fun BroScreen() {
             )
         }
     }
- 
+
     fun onMicClick() {
         if (state == BroState.LISTENING) {
             voice.stop()
@@ -607,7 +610,7 @@ fun BroScreen() {
             return
         }
         if (state == BroState.THINKING || state == BroState.EXECUTING) return
- 
+
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
@@ -622,7 +625,7 @@ fun BroScreen() {
             else -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
- 
+
     fun send() {
         val text = input.trim()
         if (text.isEmpty()) return
@@ -634,12 +637,13 @@ fun BroScreen() {
         }
         handleUserText(text)
     }
- 
+
     fun newChat() {
         jobs.job?.cancel()
         voice.cancel()
         speaker.stop()
         pending = null
+        needsAccess = false
         waitingPlan = null
         partial = ""
         level = 0f
@@ -647,7 +651,7 @@ fun BroScreen() {
         messages.add(ChatMessage(GREETING, false))
         state = BroState.IDLE
     }
- 
+
     if (showVoices) {
         val options = remember { speaker.voiceOptions() }
         var selected by remember { mutableStateOf<String?>(speaker.savedVoiceName()) }
@@ -695,7 +699,7 @@ fun BroScreen() {
             }
         )
     }
- 
+
     if (showAiSettings) {
         var keyInput by remember { mutableStateOf("") }
         var hasKey by remember { mutableStateOf(keyStore.has()) }
@@ -723,6 +727,18 @@ fun BroScreen() {
                             }
                         )
                     }
+                    Text(
+                        text = if (BroAccess.isOn) "Accessibility Service: ON (Back, screenshot, play first result)."
+                        else "Accessibility Service: OFF. Needed for Back, screenshot and play first result.",
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        },
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) { Text("Open Accessibility settings") }
                     Text(
                         text = if (hasKey) "An AI key is saved on this phone."
                         else "No AI key is saved yet.",
@@ -769,7 +785,7 @@ fun BroScreen() {
             }
         )
     }
- 
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -814,11 +830,11 @@ fun BroScreen() {
                 TextButton(onClick = { newChat() }) { Text("New chat") }
             }
         }
- 
+
         if (partial.isNotEmpty()) {
             Text(text = partial, color = Color.Gray, fontSize = 14.sp)
         }
- 
+
         BroOrb(
             state = state,
             level = level,
@@ -826,7 +842,7 @@ fun BroScreen() {
                 .fillMaxWidth()
                 .height(220.dp)
         )
- 
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -852,7 +868,18 @@ fun BroScreen() {
                 }
             }
         }
- 
+
+        if (needsAccess) {
+            Button(
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            ) { Text("Turn on BRO in Accessibility settings") }
+        }
+
         if (pending != null) {
             Row(
                 modifier = Modifier
@@ -864,7 +891,7 @@ fun BroScreen() {
                 Button(onClick = { handleUserText("no") }, modifier = Modifier.weight(1f)) { Text("No") }
             }
         }
- 
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -889,4 +916,3 @@ fun BroScreen() {
         }
     }
 }
- 
